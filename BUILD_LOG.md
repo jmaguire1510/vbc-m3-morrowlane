@@ -840,4 +840,134 @@ exact error was read from Netlify's server function log. Read-only endpoints and
 work live; only writes fail.
 
 ### Git commit
-Step 7 commit — hash recorded in Step 8 entry / `git log`.
+`36be250` — Step 7: Deploy to Netlify and document live Save failure (EROFS)
+
+---
+
+## STEP 8 — Create the Supabase database
+
+**Date:** 2026-11-20
+
+### Starting state
+- Step 7 committed (`36be250`). Live site reads seed data but every write fails with `EROFS`.
+- Supabase project **"jmaguire1510's Project"** (ref `pmegzqlmcaomayfzcpzu`, us-east-1,
+  Postgres 17, status ACTIVE_HEALTHY) already existed. `public` schema: **no tables**
+  (`list_tables` → `{"tables":[]}`).
+- Access was through the Supabase connector in this session — no keys, passwords or
+  connection strings were used, typed or stored.
+
+### Objective
+Create a Supabase table that matches the app's data, import the existing records, and
+verify schema, column types, row count and sample records. SQL shown to J.R. before running.
+
+### Evidence before change — data inspection
+```
+rows: 22 | columns: ['created_at', 'requester_name', 'location', 'description', 'priority', 'status']
+created_at all ISO-8601 UTC 'Z': True | range: 2026-07-16T14:20:00Z -> 2026-08-28T17:45:00Z
+requester_name: max length 17, any blank: False, any apostrophe: False
+description: max length 74, any blank: False, any apostrophe: False
+location {'Minneapolis': 7, 'Chicago': 5, 'Denver': 5, 'Austin': 5}
+priority {'High': 5, 'Medium': 7, 'Urgent': 4, 'Low': 6}
+status {'Complete': 13, 'In Progress': 6, 'New': 3}
+non-ASCII chars present: ['—']
+```
+
+### Files changed
+| File | Why |
+|---|---|
+| `supabase/schema.sql` | New — table, index, Row Level Security policies and permissions |
+| `supabase/seed.sql` | New — 22-row import generated from `data/seed-requests.csv`, then id counter set to 22 |
+| `BUILD_LOG.md` | Step 7 hash + Step 8 entry |
+
+### Changes made (in Supabase)
+`public.requests`:
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | `bigint` identity, primary key | auto-numbered; import supplies 1–22 |
+| `created_at` | `timestamptz` | not null, default `now()` |
+| `requester_name` | `text` | not null, not blank |
+| `location` | `text` | Minneapolis / Chicago / Denver / Austin |
+| `description` | `text` | 1–500 characters after trimming |
+| `priority` | `text` | Low / Medium / High / Urgent |
+| `status` | `text` | default `New`; New / In Progress / Complete |
+
+- Index `requests_created_at_idx` on `created_at desc` (newest-first lists).
+- **Row Level Security on**, with policies for the public `anon` role: read, insert, update.
+- **Column-level permissions for `anon`:** insert only the four form fields (the database
+  sets id, created_at and status `New`), update only `status`, no delete or truncate.
+- The app's validation rules are repeated as database CHECK constraints, so bad data is
+  refused even if someone bypasses the app.
+
+Applied as migrations `create_requests_table` and `grant_select_requests_to_anon`; seed
+inserted with `supabase/seed.sql` (`setval` → 22).
+
+### Tests performed and results
+
+**Schema (information_schema):**
+```
+id bigint NOT NULL | created_at timestamp with time zone NOT NULL default now()
+requester_name text NOT NULL | location text NOT NULL | description text NOT NULL
+priority text NOT NULL | status text NOT NULL default 'New'::text
+```
+
+| Check | Supabase | Source CSV | Match |
+|---|---|---|---|
+| Row count | 22 | 22 | ✔ |
+| id range / next id | 1–22 / 23 | — | ✔ |
+| Status counts | Complete 13, In Progress 6, New 3 | same | ✔ |
+| Location counts | Minneapolis 7, Chicago 5, Denver 5, Austin 5 | same | ✔ |
+| Priority counts | Medium 7, Low 6, High 5, Urgent 4 | same | ✔ |
+| Tile math in SQL | open 9, urgent open 2, completed this month 5 | 9 / 2 / 5 (Step 4 hand calc) | ✔ |
+| Whole-table fingerprint (md5 of all 22 rows, all 6 fields, in order) | `0f3f942f9d0281c99bd74d9b793f50b1` | `0f3f942f9d0281c99bd74d9b793f50b1` (Python on the CSV) | ✔ identical |
+| Sample rows | id 1 Dana Whitfield 2026-07-16T14:20:00Z Complete; id 3 "Standing desk request — new hire starts Aug 3" (em dash intact); id 6 "Water leak under the breakroom sink, floor 6" (comma intact); id 22 Alison Vo 2026-08-28T17:45:00Z Urgent New | same | ✔ |
+| Security advisor | no issues | — | ✔ |
+| Performance advisor | no issues | — | ✔ |
+
+**Permission test as the public `anon` role** (inside a transaction forced to roll back):
+```
+1 SELECT: OK 22 rows
+2 INSERT form fields: OK id=23 status=New
+3 INSERT status=Complete: DENIED permission denied for table requests
+4 INSERT location=Paris: DENIED new row for relation "requests" violates check constraint "requests_location_check"
+5 UPDATE status: OK rows=1
+6 UPDATE description: DENIED permission denied for table requests
+7 UPDATE status=Done: DENIED new row for relation "requests" violates check constraint "requests_status_check"
+8 DELETE: DENIED permission denied for table requests
+```
+After the test: 22 rows, id 22 still `New`, id 1 present, 0 test rows, fingerprint unchanged,
+id counter reset to 22 (Postgres id counters are not rolled back, so the test had used 23).
+
+### Problems encountered
+1. **Real bug in my first SQL — the public role could not read the table.** The first
+   permission test failed with:
+   `ERROR: 42501: permission denied for table requests` (HINT: `GRANT SELECT ON public.requests TO anon`).
+   The privilege report showed `anon` had only `REFERENCES, TRIGGER`. This Supabase project
+   does not grant table access to `anon` automatically; my SQL created a "read" policy but
+   never granted the underlying SELECT permission. The security advisor did **not** flag it.
+   In Step 9 the app would have failed to load any data.
+2. My first permission-test script began a transaction without an explicit rollback.
+3. Test inserts use up an id even when rolled back.
+
+### Resolution
+1. Added `grant select on public.requests to anon;` to `supabase/schema.sql` and applied it
+   (migration `grant_select_requests_to_anon`). Re-test: SELECT OK, all other rules as designed.
+2. It errored before writing anything (verified: 22 rows, 0 test rows). Rewrote the test so it
+   ends with a deliberate `raise exception`, which guarantees Postgres rolls everything back.
+3. Reset the id counter with `setval(..., max(id))` → 22, so the first real request gets id 23.
+
+### Observations recorded for Step 9 (not done now)
+- Supabase returns `created_at` like `2026-07-16T14:20:00+00:00`; the API contract and seed use
+  `...Z`. Normalize when connecting so the API and CSV export keep the same format.
+- New entries must send only the four form fields; the database sets id, created_at and status.
+- Use the project's public (anon / publishable) key on the server via environment variables
+  `SUPABASE_URL` and `SUPABASE_ANON_KEY` (as in `.env.example`); never a service-role key.
+
+### Verification
+The table structure matches the app's record shape, the column types fit the data, all 22
+records were imported and are identical to the CSV, the tile math is 9 / 2 / 5 in SQL, the
+public role can do exactly what the app needs and nothing more, and both Supabase advisors
+report no issues.
+
+### Git commit
+Step 8 commit — hash recorded in Step 9 entry / `git log`.
