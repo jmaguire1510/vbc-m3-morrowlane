@@ -681,4 +681,163 @@ changes return 200, persist in the file and survive a page reload; invalid statu
 return 400 and unknown ids return 404 without changing any data.
 
 ### Git commit
-Step 6 commit — hash recorded in Step 7 entry / `git log`.
+`62ab666` — Step 6: Add CSV export and PATCH status updates
+
+---
+
+## STEP 7 — Deploy and debug the live app
+
+**Date:** 2026-11-20 (UTC) / Nov 19, 2026 evening (UTC-5, the Netlify dashboard's time zone)
+
+### Starting state
+- Step 6 committed and pushed (`62ab666`) on branch `claude/vigilant-goodall-emkv66`.
+- All five endpoints work locally. Storage = local file `data/entries.csv`.
+- No Supabase. No Netlify configuration in the repo (Netlify auto-detects Next.js).
+
+### Objective
+Build, push, deploy to Netlify, test the live Save, and capture the **real** persistence
+failure and its root cause. Do not work around it.
+
+### What I did
+1. `npm run build` locally → compiled successfully; all four API routes `ƒ (Dynamic)`.
+   Checked the build trace files: `data/seed-requests.csv` is bundled with every API route,
+   so the live site can read the seed data.
+2. Confirmed GitHub branch `claude/vigilant-goodall-emkv66` is at `62ab666` (local = remote).
+3. J.R. connected the GitHub repo in the Netlify dashboard and deployed the
+   `claude/vigilant-goodall-emkv66` branch → **https://jmaguire-module3.netlify.app**
+   (dashboard: "Public", "Deploys from GitHub with Next.js", published 9:25 PM UTC-5).
+4. This cloud dev environment blocked all Netlify hosts, so a personal environment
+   `vbc-m3-morrowlane` was created allowing only `jmaguire-module3.netlify.app` (approved by J.R.).
+5. Tested the live site with a real browser (Playwright) and with `curl`.
+6. J.R. opened Netlify **Analytics & metrics → Observability**, found the failed requests,
+   and opened the server function log for the failed POST.
+
+### Expected result
+A fictional request (Taylor Livecheck / Austin / "STEP 7 live test - kitchen faucet
+dripping" / Medium) saves with HTTP 201, appears at the top of the table, and is still
+there after a refresh — the same as on the laptop.
+
+### Actual result
+**Symptom:** the red message "Could not save the request. Please try again." appears under
+the form. The table stays at 22 rows and the tiles stay at 9 / 2 / 5; after a refresh,
+nothing new is there. Changing a status from the dropdown fails the same way. Locally, both
+actions worked.
+
+Browser (Playwright) on the live site:
+```
+[network] GET /api/requests -> 200
+[network] GET /api/summary -> 200
+LOADED: tiles 9 | 2 | 5 | rows 22 | top row: Aug 28, 2026 | Alison Vo | Minneapolis
+--- clicking Submit on LIVE site ---
+[network] POST /api/requests -> 500
+POST /api/requests -> HTTP 500 | content-type: application/json
+[console.error] Failed to load resource: the server responded with a status of 500 (Internal Server Error)
+POST response body: {"error":"Could not save the request. Please try again."}
+FORM MESSAGE: Could not save the request. Please try again.
+AFTER SUBMIT: tiles 9 | 2 | 5 | rows 22 | top row: Aug 28, 2026 | Alison Vo | Minneapolis
+--- refreshing ---
+AFTER REFRESH: tiles 9 | 2 | 5 | rows 22 | top row: Aug 28, 2026 | Alison Vo | Minneapolis
+```
+Screenshot: `docs/evidence/step7-live-save.png`
+
+`curl` against the live site (test time `2026-11-20T02:29:09Z`):
+
+| Request | Writes to file? | Live result |
+|---|---|---|
+| `GET /`, `/api/requests`, `/api/summary`, `/api/export` | No | 200 (22 rows, 9/2/5, CSV) |
+| `POST` blank form | No (rejected by validation first) | 400 "Requester name is required." |
+| `POST` valid entry | **Yes** | **500** "Could not save the request. Please try again." (`x-nf-request-id: 01M7VCJK3WJHFHTMN5G1HSEJ5S`) |
+| `PATCH /api/requests/22` → In Progress | **Yes** | **500** "Could not update the status. Please try again." (`x-nf-request-id: 01M7VCJKQXJP9VHK7F0E27NXAE`) |
+| `PATCH` status "Done" | No | 400 "Status must be New, In Progress, or Complete." |
+| After all of the above | — | summary still `{"open_requests":9,"urgent_open":2,"completed_this_month":5}`, id 22 still `New` |
+
+Pattern: **everything that only reads works; everything that writes to the data file fails.**
+
+Netlify request log (Observability, UTC-5) — `docs/evidence/step7-netlify-request-log.png`:
+```
+21:28:55.572  500 POST  /api/requests      (browser save)
+21:29:09.884  500 POST  /api/requests      (curl save)
+21:29:10.315  400 POST  /api/requests      (blank form)
+21:29:10.525  500 PATCH /api/requests/22   (status change)
+21:29:10.756  400 PATCH /api/requests/22   (invalid status)
+```
+
+### Error (from Netlify's server function log)
+`docs/evidence/step7-netlify-erofs-error.png` — "Next.js Server Handler", 21:29:09:
+```
+Nov 19, 09:29:09 PM: error  POST /api/requests failed: Error:
+EROFS: read-only file system, open '/var/task/data/entries.csv'
+    at async o (.next/server/app/api/export/route.js:1:8846)
+    at async p (.next/server/app/api/export/route.js:1:8949)
+    at async x (.next/server/app/api/requests/route.js:1:1814)
+    at async k (.next/server/app/api/requests/route.js:1:4624)
+    at async g (.next/server/app/api/requests/route.js:1:5627)
+{
+  errno: -30,
+  code: 'EROFS',
+  syscall: 'open',
+  path: '/var/task/data/entries.csv'
+}
+```
+(The `export/route.js` lines are only where the bundler placed the shared storage code;
+the failing call came from `POST /api/requests`.)
+
+### Root cause
+On my laptop, the app runs as one long-lived server with a normal hard drive, so writing
+`data/entries.csv` works and the file is still there next time. On Netlify, the back end
+runs as **serverless functions**: short-lived copies of the code that start on demand, each
+from the same read-only package (`/var/task/`). The project folder there is **read-only**
+(`EROFS` = "read-only file system"), so the first attempt to create `entries.csv` is
+refused and the save returns 500.
+
+Even if the file were written somewhere writable (such as a temporary folder), it would
+belong to one short-lived function copy and disappear when that copy shuts down or a
+different copy answers the next request — which is the "saved, then vanished after a
+refresh" version of the same problem. Either way, **a file on the server is not durable
+storage on Netlify.** The data needs to live in a separate, hosted database (Supabase in
+Steps 8–9).
+
+### Files changed
+| File | Why |
+|---|---|
+| `docs/evidence/step7-live-save.png` | Live site after the failed Save |
+| `docs/evidence/step7-netlify-request-log.png` | Netlify request log showing the 500s |
+| `docs/evidence/step7-netlify-erofs-error.png` | Netlify function log with the EROFS error |
+| `BUILD_LOG.md` | Step 6 hash + Step 7 entry |
+
+**No application code was changed** — the failure is intentional for this step and was not
+worked around.
+
+### Problems encountered
+1. **This dev environment could not reach Netlify** (`api.netlify.com`,
+   `*.netlify.app` blocked by the network policy: `403 Forbidden (agent proxy: no rule
+   or network setting allows this host)`).
+2. The first live check returned **HTTP 401** on every URL with a redirect to
+   `app.netlify.com/edge-access?...` — Netlify visitor access protection (team login) was on.
+3. The Netlify dashboard menus differ from older guides; logs were under
+   **Analytics & metrics → Observability**, not "Logs → Functions".
+4. The live page only shows the friendly message, not the underlying error.
+
+### Resolution
+1. J.R. deployed from the Netlify dashboard; a personal environment allowing only
+   `jmaguire-module3.netlify.app` was created so the live site could be tested from here.
+2. J.R. set the site to **Public**; the next check returned 200.
+3. J.R. found the failed requests in Observability and opened the function log.
+4. The server-side `console.error` in each route's catch block wrote the full error to
+   Netlify's function log, which provided the exact `EROFS` message above.
+
+### Observations recorded for later
+- Deployed version: J.R. did not paste the deploy's branch/commit, but the live site behaves
+  exactly like `62ab666` (CSV export exists, validation 400 messages match, PATCH exists).
+  Confirm under **Deploys** before submitting.
+- The README predicted "data will vanish after refresh". With this implementation the
+  failure shows up earlier and more clearly — the write is refused outright — but the root
+  cause is the same.
+
+### Verification
+Failure reproduced three ways (live browser, curl, Netlify's own request log), and the
+exact error was read from Netlify's server function log. Read-only endpoints and validation
+work live; only writes fail.
+
+### Git commit
+Step 7 commit — hash recorded in Step 8 entry / `git log`.
