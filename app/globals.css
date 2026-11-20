@@ -229,6 +229,15 @@ button[type="submit"]:disabled {
   vertical-align: middle;
 }
 
+/* STEP 10 fix: let very long unbroken text (e.g. a 200-character name with no
+   spaces) wrap inside its cell instead of stretching the table off-screen.
+   Only the free-text columns (Requester, Description); applying it to every
+   cell split short fixed values like "Minneapolis" and "Medium" mid-word. */
+.requests-table td:nth-child(2),
+.requests-table td:nth-child(4) {
+  overflow-wrap: anywhere;
+}
+
 .requests-table th {
   font-size: 12px;
   text-transform: uppercase;

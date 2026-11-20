@@ -1186,8 +1186,136 @@ GET 200 ×15, **POST 201 ×1**, **PATCH 200 ×1**.
 - Delete the Netlify personal access token when no longer needed (Netlify → User settings →
   Applications), and optionally remove the saved credential from the `vbc-m3-morrowlane`
   cloud environment settings.
-- Optionally delete the unused Netlify variable name duplication later; `SUPABASE_PUBLISHABLE_KEY`
-  is the one in use.
+- (Correction made in Step 10: an earlier version of this list suggested deleting a "duplicate"
+  Netlify variable. There is no duplicate — Netlify has exactly `SUPABASE_URL` and
+  `SUPABASE_PUBLISHABLE_KEY`, both needed.)
 
 ### Git commit (B)
-Step 9 (B) live-verification commit — hash recorded in Step 10 entry / `git log`.
+`0e9aeac` — Step 9 (B): Verify live Supabase persistence on Netlify
+
+---
+
+## STEP 10 — Five-part test pass on the live app
+
+**Date:** 2026-11-20 (UTC). All tests against **https://jmaguire-module3.netlify.app**
+(production deploy of `7943bcc`) with a real browser (Playwright) unless noted.
+Test entries are named `Step10 …` so they can be identified later.
+
+### Starting state
+- Step 9 committed (`0e9aeac`). Live site on Supabase: 23 rows (22 seed + "Morgan Livecheck"),
+  tiles 10 / 2 / 0.
+
+### Objective
+Try to break the live app with five checks (happy path, empty, duplicate, absurd, math),
+record real bugs with symptom / root cause / fix / verification, without inventing requirements.
+
+### Test 1 — Happy path ✔
+```
+before: 10 | 2 | 0 | rows 23
+submit -> 201 Request submitted.
+after : 11 | 2 | 0 | rows 24
+after refresh: 11 | 2 | 0 | rows 24 | top row: Nov 20, 2026 | Step10 Happy Path | Minneapolis | Replace two ceiling tiles stained by an old leak in suite 310 | Medium
+```
+
+### Test 2 — Empty submission ✔
+```
+submit blank -> 400 Requester name is required. | rows 24 (was 24)
+submit spaces-only name -> 400 Requester name is required.
+submit name only -> 400 Location is required.
+submit name+location -> 400 Description is required.
+after refresh rows: 24 (was 24) | POST statuses: 400,400,400,400
+```
+Nothing saved. Messages name the field. Only one problem is reported at a time (README format).
+Screenshot: `docs/evidence/step10-empty-form.png`.
+
+### Test 3 — Duplicate ✔ (behaves as specified; recorded as a limitation)
+```
+1st submit -> 201 Request submitted.
+2nd identical submit -> 201 Request submitted.
+rapid double-click -> message: Request submitted.
+POST statuses: 201,201,201 | rows 24 -> 27 | "Step10 Duplicate" rows in table: 3
+```
+- Two deliberate identical submissions both save — the README has no duplicate rule, so this is
+  not treated as a bug (no requirement invented). Listed under Known limitations.
+- A rapid double-click sent **one** request (the front end disables the button while
+  submitting) — no accidental double save.
+
+### Test 4 — Absurd values ✘ → real bug found and fixed
+```
+"Step10 <script>alert("x")</script><img s…" (62 chars) -> 201
+"Step10 Zoë Ñúñez 🚀🔥" (21 chars) / "Accents and emoji: café ☕ — naïve résumé" -> 201
+"Step10 Formula" / '=HYPERLINK("http://example.com","Click me")' -> 201
+"Step10 UnbrokennameXXXX…" (199 chars, no spaces) -> 201
+"Step10 Long Description" / 500 × "W" -> 201
+layout: {"cardWidth":918,"tableWidth":3569,"pageScrollWidth":3770,"viewport":1280,"statusDropdownsOffscreen":32,"totalDropdowns":32}
+script name shown as text: "Step10 <script>alert(\"x\")</script><img src=x onerror=alert(1)>" | dialogs fired: 0 | injected <img> elements in table: 0
+emoji row: Step10 Zoë Ñúñez 🚀🔥 | Denver | Accents and emoji: café ☕ — naïve résumé
+```
+- Script/HTML in a name is displayed as plain text; no script ran (0 dialogs, 0 injected
+  elements). ✔
+- Accents and emoji save and display correctly. ✔
+- The formula text is exported raw: `'=HYPERLINK("http://example.com","Click me")'`. Excel may treat
+  it as a formula. Not covered by the README; recorded as a Known limitation (not changed).
+- **BUG:** see below.
+
+#### Bug — one long name breaks the whole table
+- **Symptom:** after saving a 199-character requester name with no spaces (accepted — the README
+  sets no name length limit), the Requester column stretched to fit it. The table grew to
+  **3,569 px** inside a 918 px card; Location, Description, Priority and **all 32 Status
+  dropdowns were pushed off-screen** for every row; the page scrolled sideways to 3,770 px.
+  Screenshot: `docs/evidence/step10-absurd-layout-before.png`.
+- **Root cause:** the table cells had no rule allowing very long words to break, so the browser
+  widened the column to fit the whole "word". Descriptions are shortened to 80 characters for
+  display, but requester names are not shortened at all.
+- **Fix (first attempt — almost right):** added `overflow-wrap: anywhere` to every table cell.
+  The table fit (878 px) and 0/32 dropdowns were off-screen — but the screenshot showed normal
+  short values broken mid-word: "Minneap / olis" and the badge "Mediu / m", because the browser
+  could now squeeze *every* column.
+- **Fix (final):** applied the rule only to the two free-text columns, Requester (column 2) and
+  Description (column 4), in `app/globals.css`. No other design change; no new validation rule.
+- **Verification (local dev server reading the same live Supabase data):**
+
+  | Measure (1280 px window) | Before | After |
+  |---|---|---|
+  | Table width (card is 918 px) | 3,569 px | **878 px** |
+  | Page width (window 1,280 px) | 3,770 px | **1,280 px** (no sideways scroll) |
+  | Status dropdowns off-screen | 32 / 32 | **0 / 32** |
+  | Location cells split across lines | — | **0 / 32** (text-line measurement) |
+  | Priority badges split across lines | — | **0 / 32** |
+
+  Screenshot: `docs/evidence/step10-absurd-layout-after-local.png`. Live verification below.
+
+- **Pre-existing, not fixed:** at phone width (390 px) the table is wider than the screen even with
+  only the original 22 rows and **without** my change (581 px in a 348 px card; 531–559 px with
+  the fix). The starter's six-column table was never designed for phones; fixing it would be a
+  front-end redesign. Recorded as a Known limitation.
+
+### Test 5 — Hand-checked tile math ✔
+Marked "Step10 Happy Path" (id 24) Complete on the live site (`PATCH 24 → 200`) so
+`completed_this_month` is non-zero, then calculated all three tiles by hand from the downloaded
+live CSV (Python's `csv` module — independent of the app's summary code), and a third time in SQL:
+```
+APP TILES: {"open_requests":18,"urgent_open":3,"completed_this_month":1}
+HAND CHECK from the downloaded live CSV:
+total rows: 32
+open_requests = rows not Complete = 18  (status counts: New 11, In Progress 7, Complete 14)
+urgent_open   = not Complete AND Urgent = 3: id 32 Step10 Long Description; id 22 Alison Vo; id 15 Priya Raghunathan
+completed_this_month: latest created_at = 2026-11-20T03:27:26Z -> month 2026-11; Complete in 2026-11 = 1: id 24 Step10 Happy Path
+SUPABASE SQL: total_rows 32, open_requests 18, urgent_open 3, completed_this_month 1
+```
+App = hand calculation = database. ✔
+
+### Files changed (commit A)
+| File | Why |
+|---|---|
+| `app/globals.css` | Wrap long unbroken text in the Requester and Description cells only |
+| `docs/evidence/step10-*.png` | Empty-form, before and after screenshots |
+| `BUILD_LOG.md` | Step 9 (B) hash, correction, Step 10 entry |
+
+### Problems encountered (test tooling)
+- My first check for split words measured cell height, which is always the full row height in a
+  table, so it falsely reported every Location as split. Re-measured the text's own line count:
+  0 split. Not an app issue.
+
+### Live verification of the fix
+Pending — requires deploying commit (A). Recorded in commit (B) along with SUBMISSION.md.
