@@ -236,4 +236,125 @@ API output, on-screen tiles, and on-screen table all match the source CSV and th
 independent hand calculation.
 
 ### Git commit
-Step 2 commit — hash recorded in Step 3 entry / `git log`.
+`c7f83ba` — Step 2: Add GET /api/requests and GET /api/summary from seed CSV
+(pushed; GitHub access was restored before this push).
+
+---
+
+## STEP 3 — Save entries (local storage)
+
+**Date:** 2026-11-20
+
+### Starting state
+- Step 2 committed (`c7f83ba`). `GET /api/requests` and `GET /api/summary` read
+  `data/seed-requests.csv` (read-only; ids assigned by row order).
+- `app/api/requests/route.js` exports only `GET`.
+
+### Objective
+Implement `POST /api/requests` with **local file storage** (no Supabase). New
+records get a generated id and `created_at`, status `New`, and HTTP 201. Verify the
+entry appears, summaries update, and the record is in the local file.
+
+### Evidence before change
+```
+BEFORE: POST /api/requests -> HTTP 405
+```
+(Route now exists from Step 2 but has no POST handler → 405 Method Not Allowed,
+where Step 1 showed 404 because there was no route at all.)
+
+### Storage approach
+- Local file **`data/entries.csv`** (the file name the course checklist asks you to
+  check). Columns: `id,created_at,requester_name,location,description,priority,status`.
+- On the first save, the 22 seed rows are copied into `entries.csv` with ids 1–22
+  (the same ids Step 2 assigned), then the new row is appended. From then on,
+  `entries.csv` is the source of truth; `seed-requests.csv` is never modified.
+- New id = highest existing id + 1. `created_at` = current UTC time, ISO format
+  without milliseconds (matches the seed format).
+- `data/entries.csv` is added to `.gitignore`, so test entries saved on a
+  developer machine are never committed.
+
+### Files changed
+| File | Why |
+|---|---|
+| `lib/requests-store.js` | Reads `entries.csv` when present (else seed); new `createRequest()` writes/appends to `entries.csv` |
+| `lib/csv.js` | New `toCsvRow()` — quotes values containing commas, quotes, or line breaks |
+| `app/api/requests/route.js` | New `POST` handler → 201 `{ "request": {...} }`, clean 500 on failure |
+| `.gitignore` | Ignore `data/entries.csv` (local runtime data) |
+| `docs/evidence/step3-save-entry.png` | Screenshot after saving |
+| `BUILD_LOG.md` | Step 2 hash + Step 3 entry |
+
+### Tests performed and results
+
+**Browser form (Playwright)** — fictional entry: Jordan Testwell / Chicago /
+`STEP 3 test: "Quiet room" door lock sticks, needs adjustment` / Urgent
+(includes a comma and double quotes to exercise CSV escaping).
+
+```
+BEFORE tiles: 9 | 2 | 5 | rows: 22
+POST status: 201
+POST body: {"request":{"id":23,"created_at":"2026-11-20T02:00:42Z","requester_name":"Jordan Testwell","location":"Chicago","description":"STEP 3 test: \"Quiet room\" door lock sticks, needs adjustment","priority":"Urgent","status":"New"}}
+FORM MESSAGE: Request submitted.
+AFTER tiles: 10 | 3 | 0 | rows: 23
+row 1: Nov 20, 2026 | Jordan Testwell | Chicago | STEP 3 test: "Quiet room" door lock sticks, needs adjustment | Urgent | (status select: New)
+form cleared: true
+AFTER RELOAD rows: 23 | row 1 requester: Jordan Testwell
+```
+
+**Local file after the save:**
+```
+data/entries.csv: 24 lines (header + rows)
+id,created_at,requester_name,location,description,priority,status
+1,2026-07-16T14:20:00Z,Dana Whitfield,Minneapolis,HVAC making noise in suite 400,High,Complete
+...
+22,2026-08-28T17:45:00Z,Alison Vo,Minneapolis,"Air conditioning in suite 220 is not cooling, staff moved to the open area",Urgent,New
+23,2026-11-20T02:00:42Z,Jordan Testwell,Chicago,"STEP 3 test: ""Quiet room"" door lock sticks, needs adjustment",Urgent,New
+```
+
+**Second save (curl)** — Riley Sample / Austin / Low → `HTTP 201`, `id: 24`,
+`status: "New"`. Last row of `entries.csv` = id 24 Riley Sample ✔.
+
+| Check | Result |
+|---|---|
+| HTTP 201 | ✔ (both saves) |
+| id generated | ✔ 23, then 24 |
+| created_at generated | ✔ `2026-11-20T02:00:42Z`, `2026-11-20T02:00:55Z` |
+| status = New | ✔ |
+| Entry appears in table (top row, newest first) | ✔, and still there after page reload |
+| Summaries update | open 9 → 10 → 11, urgent 2 → 3 (Jordan is Urgent) ✔; completed_this_month 5 → 0 (see below) |
+| Stored locally | ✔ last row of `data/entries.csv` matches the submitted entry |
+| Seed ids unchanged | ✔ rows 1–22 in `entries.csv` match seed values and ids |
+| CSV escaping on write | ✔ comma and `"` round-trip correctly |
+| Malformed JSON body | `500 {"error":"Could not save the request. Please try again."}` (clean JSON, no crash) |
+| `npm run build` | ✔ compiled successfully, no warnings |
+
+### Problems encountered
+1. Dev-server log showed `Attempted import error: 'toCsvRow' is not exported from './csv'`.
+2. After the save, **completed_this_month dropped from 5 to 0**.
+
+### Resolution
+1. Timing artifact: hot reload compiled `requests-store.js` in the moment before
+   `toCsvRow` was added to `csv.js`. The saves after it succeeded, and a clean
+   `npm run build` compiled with no errors or warnings. No change needed.
+2. **Recorded, not changed (Step 4 is the calculation check).** This follows the
+   README rule as written: "this month" is the month of the *most recent request in
+   the data*. The new entry is dated Nov 2026, which moves "this month" from August
+   to November, and no November requests are Complete → 0. Step 4 will verify it by
+   hand and decide whether it is correct.
+
+### Observations recorded for later (not fixed now)
+- No validation yet: blank fields, bad locations, etc. are currently saved
+  (Step 5). Malformed JSON currently returns 500; Step 5 should make it a 400.
+- Saving relies on writing to the server's disk (`data/entries.csv`). That will not
+  persist on Netlify — expected Step 7 failure.
+- Id assignment reads then appends; two saves at the exact same moment could get
+  the same id. Acceptable for local storage, replaced by the database in Step 9.
+- Local `data/entries.csv` currently holds the 2 test entries (ids 23–24). It is
+  git-ignored; deleting it resets the app to the seed data.
+
+### Verification
+Entry submitted through the real form returned 201, appeared at the top of the
+table, survived a page reload, updated the tiles, and is the last row of
+`data/entries.csv`.
+
+### Git commit
+Step 3 commit — hash recorded in Step 4 entry / `git log`.
