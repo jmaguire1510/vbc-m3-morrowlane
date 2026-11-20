@@ -357,4 +357,95 @@ table, survived a page reload, updated the tiles, and is the last row of
 `data/entries.csv`.
 
 ### Git commit
-Step 3 commit — hash recorded in Step 4 entry / `git log`.
+`a5075df` — Step 3: Add POST /api/requests with local CSV storage
+
+---
+
+## STEP 4 — Verify a calculation by hand
+
+**Date:** 2026-11-20
+
+### Starting state
+- Step 3 committed (`a5075df`). Tiles are calculated in `lib/summary.js`.
+- Local `data/entries.csv` holds the 22 seed rows plus Step 3 test entries 23 and 24
+  (both dated 2026-11-20, status New).
+- Open question from Step 3: after the first save, `completed_this_month` dropped 5 → 0.
+
+### Objective
+Independently calculate `completed_this_month` from the source data, compare it with
+the app, and fix and retest if they differ.
+
+### Rule being checked (README)
+> the number of requests with status `Complete` whose `created_at` falls in **the month
+> of the most recent request in the data** — not the month it happens to be today.
+
+### Evidence before change — independent hand calculation
+Done with Python's built-in `csv` module directly on `data/seed-requests.csv` (no app
+code involved):
+
+```
+Total rows: 22 | most recent created_at: 2026-08-28T17:45:00Z -> month 2026-08
+
+All Complete rows:
+  2026-07-16  Dana Whitfield    Complete
+  2026-07-17  Marcus Ellery     Complete
+  2026-07-20  Priya Raghunathan Complete
+  2026-07-22  Tomas Beckley     Complete
+  2026-07-24  Alison Vo         Complete
+  2026-07-27  Devon Ruiz        Complete
+  2026-07-29  Hannah Sorensen   Complete
+  2026-07-31  Curtis Nakamura   Complete
+  2026-08-03  Renata Oyelaran   Complete  <-- counts
+  2026-08-04  Grant Pemberton   Complete  <-- counts
+  2026-08-06  Sofia Marchetti   Complete  <-- counts
+  2026-08-07  Isaac Fontaine    Complete  <-- counts
+  2026-08-10  Dana Whitfield    Complete  <-- counts
+
+HAND RESULT (seed): completed_this_month = 5
+```
+
+Month-boundary / time-zone check: the only row near a month edge is
+`2026-07-31T17:26:00Z` (12:26 pm Central, 11:26 am Mountain). It is July in UTC and in
+every US time zone, so the UTC month comparison can't misplace it.
+
+### Tests performed and results
+
+| Scenario | Data | Hand calculation | App (`GET /api/summary`) | Match |
+|---|---|---|---|---|
+| A | Seed only (`entries.csv` moved aside temporarily) | month 2026-08 → open 9, urgent 2, **completed 5** | `{"open_requests":9,"urgent_open":2,"completed_this_month":5}` | ✔ |
+| B | Current local data (seed + Nov test entries 23, 24) | month 2026-11 → open 11, urgent 3, **completed 0** | `{"open_requests":11,"urgent_open":3,"completed_this_month":0}` | ✔ |
+| C | Controlled: id 23 hand-edited to `Complete` | month 2026-11 → open 10, urgent 2, **completed 1** | `{"open_requests":10,"urgent_open":2,"completed_this_month":1}` | ✔ |
+
+After the test, `entries.csv` was restored from a backup (`cmp` confirmed identical) and
+the app returned `{"open_requests":11,"urgent_open":3,"completed_this_month":0}` again.
+
+### Files changed
+| File | Why |
+|---|---|
+| `BUILD_LOG.md` | Step 3 hash + Step 4 entry |
+
+No application code was changed — the calculation matched in every scenario.
+
+### Problems encountered
+- The 5 → 0 drop seen in Step 3 looked like a bug at first.
+
+### Resolution
+- Not a bug. The hand calculation shows it is exactly what the README rule produces:
+  once a November request exists, "this month" becomes November, and no November
+  requests are Complete. Scenario C proves the app counts correctly when one is.
+- No code change, so no new requirement was invented to make the number "look nicer".
+
+### Observations recorded for later (not fixed — would change the specified rule)
+- The tile counts requests that were *created* in the latest month and are now
+  Complete. There is no "completed date" column, so a July request finished in August
+  does not count as "completed in August". This is a limitation of the data model and
+  is worth listing under Known limitations.
+- Any new request moves "this month" to the current month, so the tile resets to 0
+  until something from that month is marked Complete. Worth explaining to users.
+
+### Verification
+Three independent hand calculations (seed, current data, controlled edit) all match
+the app's output exactly.
+
+### Git commit
+Step 4 commit (documentation only) — hash recorded in Step 5 entry / `git log`.
