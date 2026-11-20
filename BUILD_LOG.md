@@ -556,4 +556,129 @@ count did not change. Valid submissions (including the 500-character boundary) r
 201 and were saved with trimmed values.
 
 ### Git commit
-Step 5 commit — hash recorded in Step 6 entry / `git log`.
+`9aabdb9` — Step 5: Add server-side validation to POST /api/requests
+
+---
+
+## STEP 6 — CSV export and status updates
+
+**Date:** 2026-11-20
+
+### Starting state
+- Step 5 committed (`9aabdb9`). GET/POST `/api/requests` and GET `/api/summary` work.
+- No `app/api/export` or `app/api/requests/[id]` route.
+
+### Objective
+Implement `GET /api/export` (CSV, newest first, correct MIME type and download
+filename, correct escaping) and `PATCH /api/requests/[id]` (valid status → 200,
+invalid status → 400, unknown id → 404).
+
+### Evidence before change
+```
+BEFORE: GET   /api/export      -> HTTP 404 text/html; charset=utf-8
+BEFORE: PATCH /api/requests/22 -> HTTP 404 text/html; charset=utf-8
+BEFORE browser: status dropdown -> PATCH /api/requests/22 HTTP 404 | table error: "Could not reach the server. Please try again." | dropdown now: New
+```
+
+### Files changed
+| File | Why |
+|---|---|
+| `app/api/export/route.js` | New — CSV download |
+| `app/api/requests/[id]/route.js` | New — PATCH status |
+| `lib/requests-store.js` | `updateRequestStatus()`; shared `writeAllRecords()` helper (also used by first save); `COLUMNS` exported for the export |
+| `lib/validation.js` | `STATUSES` + `validateStatusUpdate()` |
+| `lib/csv.js` | `toCsv()` builds a full CSV document |
+| `docs/evidence/step6-status-and-export.png` | Screenshot after status change |
+| `BUILD_LOG.md` | Step 5 hash + Step 6 entry |
+
+### Changes made
+- **Export:** columns `id,created_at,requester_name,location,description,priority,status`;
+  rows newest first (same order as the table); values containing commas, quotes or
+  line breaks are quoted with inner quotes doubled; CRLF line endings (CSV standard).
+  Headers: `Content-Type: text/csv; charset=utf-8`,
+  `Content-Disposition: attachment; filename="morrowlane-requests.csv"`,
+  `Cache-Control: no-store`.
+- **UTF-8 byte-order mark** at the start of the file: the seed data contains an em dash
+  ("Standing desk request — new hire…"), which Excel shows as garbled characters without
+  it. Spreadsheet tools and Python's `utf-8-sig` handle it transparently.
+- **PATCH:** validates the body first (400), then looks up the id (404 if missing or not
+  a whole number), updates and rewrites `data/entries.csv`, returns 200 with the record.
+  Uses `await params` (required by Next.js 15).
+
+### Tests performed and results
+
+**Export (curl + independent Python check)** — added one valid entry first (id 28,
+`STEP 6 escaping test: "Room 5", east wing` + a line break + `Second line here`) to
+exercise escaping.
+
+```
+HTTP/1.1 200 OK
+cache-control: no-store
+content-disposition: attachment; filename="morrowlane-requests.csv"
+content-type: text/csv; charset=utf-8
+first 3 lines (cat -A; M-oM-;M-? = BOM, ^M$ = CRLF):
+M-oM-;M-?id,created_at,requester_name,location,description,priority,status^M$
+28,2026-11-20T02:08:29Z,Quinn Escapetest,Chicago,"STEP 6 escaping test: ""Room 5"", east wing$
+Second line here",Medium,New^M$
+header: ['id', 'created_at', 'requester_name', 'location', 'description', 'priority', 'status']
+CSV rows: 28 | API rows: 28
+newest first: True
+every value matches API (same order): True
+escaping round-trip: 'STEP 6 escaping test: "Room 5", east wing\nSecond line here'
+seed quoted-comma row: ['Water leak under the breakroom sink, floor 6']
+em dash preserved: ['Standing desk request — new hire starts Aug 3']
+```
+
+**PATCH (curl):**
+
+| Test | HTTP | Result |
+|---|---|---|
+| id 22 → `In Progress` | 200 | record returned; `entries.csv` row 22 changed `New` → `In Progress`; summary open 15, urgent 3, completed 0 |
+| id 28 → `Complete` | 200 | summary open 14, urgent 3, **completed_this_month 1** (Nov request now Complete) |
+| status `Done` | 400 | Status must be New, In Progress, or Complete. |
+| status `complete` (lowercase) | 400 | same message |
+| missing status `{}` | 400 | same message |
+| malformed JSON | 400 | Request body must be valid JSON. |
+| id `9999` | 404 | No request found with id 9999. |
+| id `abc` | 404 | No request found with id abc. |
+| File after all invalid PATCHes | — | unchanged (md5 identical), 28 rows |
+
+**Browser (Playwright):**
+```
+tiles before: 14 | 3 | 1
+Sofia (Aug 27, Low) before: New
+PATCH /api/requests/21 -> HTTP 200 | table error: (none)
+tiles after: 13 | 3 | 1
+Sofia after reload: Complete
+download filename: morrowlane-requests.csv | bytes: 3725 | Sofia row in file: 21,2026-08-27T14:12:00Z,Sofia Marchetti,Denver,Request a second recycling pickup each week,Low,Complete
+```
+Completed-this-month correctly stayed at 1: Sofia's request is from August, and the
+latest month in the data is November (Step 4 rule).
+
+`npm run build`: compiled successfully; routes `/api/export`, `/api/requests`,
+`/api/requests/[id]`, `/api/summary` all `ƒ (Dynamic)`.
+
+### Problems encountered
+- `xxd` is not installed in this environment, so the hex check of the first bytes printed
+  nothing.
+
+### Resolution
+- Used `cat -A` instead, which shows the BOM (`M-oM-;M-?`) and CRLF (`^M$`) directly.
+
+### Observations recorded for later (not fixed now)
+- **Spreadsheet formula injection:** a description starting with `=`, `+`, `-` or `@` is
+  exported as-is, and Excel may treat it as a formula. Not in the README contract —
+  candidate for Step 10 "absurd input" / Known limitations.
+- PATCH and POST rewrite/append the local file; simultaneous updates could overwrite each
+  other. Replaced by the database in Step 9.
+- Local `data/entries.csv` now holds test rows 23–28 and status changes to 21, 22, 28
+  (git-ignored).
+
+### Verification
+Export matches the API row-for-row and value-for-value, is newest first, downloads as
+`morrowlane-requests.csv`, and escapes commas, quotes and line breaks correctly. Status
+changes return 200, persist in the file and survive a page reload; invalid statuses
+return 400 and unknown ids return 404 without changing any data.
+
+### Git commit
+Step 6 commit — hash recorded in Step 7 entry / `git log`.
