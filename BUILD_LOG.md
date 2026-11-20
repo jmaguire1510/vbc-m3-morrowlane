@@ -141,4 +141,99 @@ Failure reproduced three independent ways (browser UI, curl, server log), all
 showing `404` on `/api/requests`. Nothing was fixed.
 
 ### Git commit
-Step 1 commit — hash recorded in Step 2 entry / `git log`.
+`4144b21` — Step 1: Diagnose starter project - document failed Save (404)
+
+Push note: `git push` was refused with HTTP 403 ("Claude doesn't have GitHub
+access to jmaguire1510/vbc-m3-morrowlane"). The commit stayed local until GitHub
+access was fixed.
+
+---
+
+## STEP 2 — Build read endpoints
+
+**Date:** 2026-11-20
+
+### Starting state
+- Step 1 committed (`4144b21`). No `app/api` routes; nothing reads the CSV.
+- Every API call returns the Next.js HTML 404 page; tiles show `–`, table is empty.
+
+### Objective
+Implement only `GET /api/requests` and `GET /api/summary`, reading from
+`data/seed-requests.csv`, and verify them against the source data.
+
+### Evidence before change — source data inspection
+- `data/seed-requests.csv`: UTF-8, LF line endings, header +
+  **22 data rows** (`tail -n +2 | grep -c .` → `22`).
+- Columns: `created_at,requester_name,location,description,priority,status`; no `id`.
+- 4 rows have quoted descriptions containing commas (e.g.
+  `"Water leak under the breakroom sink, floor 6"`), so a naive `split(",")` would
+  break them; a proper CSV parser is required.
+- Status breakdown: 13 Complete, 6 In Progress, 3 New.
+
+**Hand calculation from the CSV (done before coding):**
+
+| Tile | Rule | Rows | Expected |
+|---|---|---|---|
+| open_requests | status ≠ Complete | 6 In Progress + 3 New | **9** |
+| urgent_open | status ≠ Complete and priority = Urgent | Priya Raghunathan (server room, In Progress), Alison Vo (suite 220 AC, New) | **2** |
+| completed_this_month | Complete, in the month of the latest request | Latest = 2026-08-28 → Aug 2026. Complete in Aug: Renata Oyelaran 08-03, Grant Pemberton 08-04, Sofia Marchetti 08-06, Isaac Fontaine 08-07, Dana Whitfield 08-10 | **5** |
+
+### Files changed
+| File | Why |
+|---|---|
+| `lib/csv.js` | New — CSV parser that handles quoted fields and `""` escapes |
+| `lib/requests-store.js` | New — reads the seed CSV, assigns ids 1..22 in file order, sorts newest first |
+| `lib/summary.js` | New — the three tile calculations |
+| `app/api/requests/route.js` | New — `GET /api/requests` |
+| `app/api/summary/route.js` | New — `GET /api/summary` |
+| `docs/evidence/step2-read-endpoints.png` | Screenshot of the filled table and tiles |
+| `BUILD_LOG.md` | Step 1 hash + Step 2 entry |
+
+### Changes made
+- Storage reads `data/seed-requests.csv` on each request. Ids are assigned by row
+  order (oldest = 1, newest = 22) because the CSV has no id column.
+- Newest-first sort on `created_at`, with id as a tie-breaker.
+- "This month" uses the **UTC** month of the most recent `created_at` (timestamps
+  are stored with `Z`), not today's date.
+- Both handlers are wrapped in try/catch and return `500 {"error": "..."}` on failure.
+
+### Tests performed and results
+
+| Test | Result |
+|---|---|
+| `curl /api/requests` | `HTTP 200 application/json` |
+| `curl /api/summary` | `HTTP 200 application/json` → `{"open_requests":9,"urgent_open":2,"completed_this_month":5}` |
+| Row count | 22 (matches CSV) |
+| Newest-first order | True — first `2026-08-28T17:45:00Z` Alison Vo (id 22), last `2026-07-16T14:20:00Z` Dana Whitfield (id 1) |
+| Every field matches CSV | True (all 22 records compared field-by-field with Python's `csv` module) |
+| Quoted comma row parsed | `Water leak under the breakroom sink, floor 6` ✔ |
+| Unique ids | True |
+| Browser: tiles | `9 | 2 | 5` — matches hand calculation |
+| Browser: table | 22 rows; row 1 `Aug 28, 2026 | Alison Vo | …`, row 22 `Jul 16, 2026 | Dana Whitfield | …` |
+| Browser console | No errors; both calls `200` |
+| 500 path (seed file temporarily renamed, then restored) | `500 {"error":"Could not load requests. Please try again."}` and `500 {"error":"Could not load the summary. Please try again."}`; `200` again after restoring |
+| `npm run build` | Success; `/api/requests` and `/api/summary` listed as `ƒ (Dynamic)` |
+
+### Problems encountered
+1. First draft exported `calculateSummary` from `app/api/summary/route.js`. Next.js
+   only allows HTTP-method exports (and a few config names) from route files, so
+   this would fail at build time.
+2. First draft imported with `@/lib/...`, which needs a `jsconfig.json` path alias
+   the project doesn't have.
+
+### Resolution
+1. Moved the calculation to `lib/summary.js`.
+2. Switched to relative imports. Both caught before running; build passes.
+
+### Observations recorded for later (not fixed now)
+- Ids are derived from row order. That is fine while the data is read-only; Step 3
+  needs a storage approach where new rows get the next id and existing ids stay stable.
+- On Netlify, reading `data/` relies on Next.js file tracing bundling the CSV with
+  the function — check in Step 7.
+
+### Verification
+API output, on-screen tiles, and on-screen table all match the source CSV and the
+independent hand calculation.
+
+### Git commit
+Step 2 commit — hash recorded in Step 3 entry / `git log`.
