@@ -970,4 +970,107 @@ public role can do exactly what the app needs and nothing more, and both Supabas
 report no issues.
 
 ### Git commit
-Step 8 commit — hash recorded in Step 9 entry / `git log`.
+`5d8d36a` — Step 8: Create Supabase requests table and import seed data
+
+---
+
+## STEP 9 — Connect the app to Supabase
+
+**Date:** 2026-11-20
+
+> Step 9 uses **two commits**: (A) the code change plus local verification, pushed so Netlify
+> can deploy it; (B) the live-site verification, which can only happen after (A) is deployed.
+
+### Starting state
+- Step 8 committed (`5d8d36a`). Supabase table `public.requests` holds the 22 seed rows.
+- `lib/requests-store.js` reads/writes CSV files → live writes fail with `EROFS` (Step 7).
+
+### Objective
+Replace local file storage with Supabase using environment variables and the public
+(anon/publishable) key, keeping the API contract unchanged, then verify locally and live.
+
+### Evidence before change
+- `.env.example`: `SUPABASE_URL`, `SUPABASE_ANON_KEY` (placeholders only).
+- `.gitignore` already ignores `.env` and `.env.local` (`git check-ignore -v .env.local` →
+  `.gitignore:5:.env.local`). No code read any environment variables.
+- Variable names have **no `NEXT_PUBLIC_` prefix**, so Next.js keeps them server-side only.
+- This dev environment could not reach Supabase: `403 Forbidden (agent proxy: no rule or
+  network setting allows this host)` for `pmegzqlmcaomayfzcpzu.supabase.co`.
+
+### Credentials handling
+- Project URL from the Supabase connector: `https://pmegzqlmcaomayfzcpzu.supabase.co`.
+- The project has two public keys (legacy `anon` JWT and modern `sb_publishable_…`); both map
+  to the `anon` role. Used the **publishable** key (Supabase's recommendation). **Not** the
+  service-role key.
+- The key lives only in `.env.local` (git-ignored, file mode 600) locally and in Netlify's
+  environment variables live. It is not written in this log, code, or any committed file.
+
+### Files changed
+| File | Why |
+|---|---|
+| `lib/requests-store.js` | Rewritten for Supabase: same exported functions (`getAllRequests`, `createRequest`, `updateRequestStatus`, `COLUMNS`) and same record shape |
+| `lib/csv.js` | Removed the now-unused CSV reader (`parseCsv`, `csvToObjects`); export writer kept |
+| `package.json`, `package-lock.json` | Added `@supabase/supabase-js` pinned to `2.119.0` |
+| `BUILD_LOG.md` | Step 8 hash + Step 9 entry |
+| `.env.local` | Created locally with the URL and publishable key — **git-ignored, not committed** |
+
+No route files or front-end files changed.
+
+### Changes made
+- `getAllRequests()` → `select` ordered by `created_at desc, id desc` (newest first in the DB).
+- `createRequest()` → `insert` of only the four validated form fields; Supabase assigns
+  `id`, `created_at` and `status = 'New'` (matches the Step 8 column permissions).
+- `updateRequestStatus()` → `update({ status }).eq("id", id)`; no matching row → `null` → 404.
+- Timestamps normalized from Supabase's `2026-07-16T14:20:00+00:00` /
+  `...02.273691+00:00` to the contract's `2026-07-16T14:20:00Z`.
+- Missing env vars or any Supabase error throws inside the route's try/catch → clean
+  `500 {"error": "..."}` JSON.
+- Server validation (Step 5) still runs before any database call.
+
+### Tests performed and results (local dev server → real Supabase)
+
+| Test | Result |
+|---|---|
+| `GET /api/requests` | 200, 22 rows, newest first, ids are integers, **every field identical to the CSV** including `...Z` dates |
+| `GET /api/summary` | 200 `{"open_requests":9,"urgent_open":2,"completed_this_month":5}` |
+| `POST` valid (padded name, quotes + commas) | **201** id 23, name trimmed, status New, `created_at` `2026-11-20T02:49:02Z` |
+| `POST` blank name / location Paris | 400 with the Step 5 messages; nothing saved |
+| Summary after save | open 10, urgent 2, completed 0 (Nov is now latest month — Step 4 rule) |
+| `PATCH 23 → Complete` | 200; summary → open 9, urgent 2, completed_this_month 1 |
+| `PATCH 23` status "Done" | 400 "Status must be New, In Progress, or Complete." |
+| `PATCH 9999` / `PATCH abc` | 404 "No request found with id …" |
+| `GET /api/export` | 200, `text/csv; charset=utf-8`, `attachment; filename="morrowlane-requests.csv"`, 23 rows identical to the API, quotes/commas escaped |
+| Row in Supabase (via SQL) | id 23 present, status `Complete`, stored as `2026-11-20 02:49:02.273691+00` |
+| Cleanup | Deleted test row 23 (`returning id 23 'Local Supabase Test'`), reset id counter → 22; table back to 22 rows, fingerprint `0f3f942f9d0281c99bd74d9b793f50b1` (identical to CSV) |
+| `npm run build` | Compiled successfully; all API routes `ƒ (Dynamic)` |
+| Secret scan | Key found in **0** files under `.next/static` (browser), **0** in `.next/server`, **0** committable files; legacy anon JWT in 0 files; `service_role` in 0 code lines |
+
+### Problems encountered
+1. First local run: every endpoint returned 500. Server log:
+   `GET /api/summary failed: Error: Supabase select failed: TypeError: fetch failed`.
+2. Two PATCH tests returned `308` instead of 200/400.
+3. `npm audit` reports critical/high advisories in `next` (and its `postcss`, `sharp`).
+
+### Resolution
+1. Cause: this sandbox routes HTTPS through a proxy, and Node's built-in `fetch` ignores
+   proxy settings unless `NODE_USE_ENV_PROXY=1` is set (documented in the sandbox's proxy
+   notes; `curl` worked because it honors the proxy). Restarted the dev server with
+   `NODE_USE_ENV_PROXY=1` — sandbox-only; Netlify connects directly. **No code change.** The
+   500 itself confirmed the error handling works (clean JSON, no crash).
+2. My test script's bug: it saved the POST reply plus my own `<- HTTP 201` note into the same
+   file, so extracting the id failed and the PATCH went to `/api/requests/` (Next.js redirects
+   the trailing slash → 308). Re-ran with id 23: 200 and 400 as expected. Not an app bug.
+3. Pre-existing in the starter's Next.js version; not caused by `@supabase/supabase-js`.
+   Out of scope for this step — recorded under Known limitations for later.
+
+### Observations recorded for later
+- Supabase returns at most 1,000 rows per request by default; the list and export would need
+  paging beyond that.
+- `data/entries.csv` (git-ignored) is no longer used; the local copy was moved out of the
+  project. `data/seed-requests.csv` stays as the original source data.
+
+### Live verification
+Pending — requires Netlify environment variables + redeploy. Recorded in commit (B).
+
+### Git commit
+(A) Step 9 code commit — hash recorded in the live-verification section / `git log`.
