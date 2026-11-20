@@ -1349,4 +1349,60 @@ entries (Step 10). They are left in place as evidence; J.R. can decide in Step 1
 remove them before submitting.
 
 ### Git commit (B)
-Step 10 (B) — hash recorded in Step 11 entry / `git log`.
+`459be9f` — Step 10 (B): Verify layout fix live; record test results in SUBMISSION
+
+---
+
+## STEP 11 — Final verification and submission
+
+**Date:** 2026-11-20
+
+### Starting state
+- Steps 1–10 committed and pushed (`459be9f`). SUBMISSION.md had the test table and known
+  limitations; name, URLs, What I built, Debug Log and Assessment were still placeholders.
+- J.R. chose to **keep** the test entries in the live database as visible evidence of testing.
+
+### Final verification
+```
+local HEAD:  459be9f | remote branch: 459be9f | working tree clean: yes
+main on GitHub: a26a2ae (Initial commit) | commits on branch not in main: 13
+Netlify published: 459be9f claude/vigilant-goodall-emkv66 production ready 2026-11-20T03:34:54.203Z
+GET / -> 200 text/html; charset=utf-8
+GET /api/requests -> 200 application/json
+GET /api/summary -> 200 application/json
+GET /api/export -> 200 text/csv; charset=utf-8
+{"error":"Requester name is required."}  <- invalid POST 400
+{"error":"No request found with id 99999."}  <- PATCH unknown id 404
+secrets check: .env.local tracked? 0 | key strings in repo history: 0
+```
+Live browser check (playwright):
+```
+LOADED: tiles 18 | 3 | 1 | rows 32 | top: Nov 20, 2026 | Step10 Long Description | Chicago
+POST -> 201 | message: Request submitted.
+AFTER SAVE: tiles 19 | 3 | 1 | rows 33 | top: Nov 20, 2026 | Step11 Final Check | Austin
+AFTER REFRESH: tiles 19 | 3 | 1 | rows 33 | top: Nov 20, 2026 | Step11 Final Check | Austin
+console errors during happy path: 0
+```
+
+### Files changed
+| File | Why |
+|---|---|
+| `SUBMISSION.md` | Name, live URL, repo URL, What I built, Debug Log (Step 7 EROFS bug), Assessment (261 words) — reviewed and approved by J.R. before commit |
+| `BUILD_LOG.md` | Step 10 (B) hash + Step 11 entry |
+
+### Debug Log source
+The Debug Log describes the real Step 7 failure (`EROFS: read-only file system, open
+'/var/task/data/entries.csv'`), its Supabase fix and the live verification from Step 9.
+"What I asked Claude" quotes J.R.'s actual Step 7 instruction verbatim; no prompt was invented.
+
+### Problems encountered
+- GitHub's `main` branch still contained only the starter (`a26a2ae`); all work was on
+  `claude/vigilant-goodall-emkv66`, so the repo link would have shown the starter by default.
+
+### Resolution
+- J.R. chose to merge into `main` via a pull request (J.R. merges on GitHub). Netlify deploys
+  from `claude/vigilant-goodall-emkv66`, so the live site is unaffected by the merge.
+
+### Git commit
+Step 11 commit — its hash is reported in the final summary and `git log` (a commit cannot
+contain its own hash).
