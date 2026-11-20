@@ -28,6 +28,8 @@ Claude tested the live site and reported back in that three-part form — what I
 
 **Verification:** On the live site I submitted a fictional request ("Morgan Livecheck"), refreshed, and it was still at the top. I changed its status to In Progress and refreshed again — the change stuck. The same row showed up in the Supabase table, the counters went up correctly, and the CSV export included it with the new status. Supabase's own logs showed the save arriving from Netlify and succeeding. In the final check, a new request ("Step11 Final Check") also saved and stayed after a refresh.
 
+*Note: After verification, all test entries (including "Morgan Livecheck" and "Step11 Final Check") were deleted from the live database. The site now shows only the original 22 requests.*
+
 ## Test pass results
 
 *Run all five checks against your live site and record what happened. "Result" is pass or fail plus what you actually saw. "Fix made" is what you changed, or "None needed."*
@@ -54,10 +56,13 @@ Claude tested the live site and reported back in that three-part form — what I
 
 *Around 250 words, first person. Where did AI move fast for you? Describe one genuine almost-right moment — something that looked correct and wasn't — and how you caught it. What would you prompt differently next time?*
 
-AI moved fastest on the parts I expected to be hardest. Once I gave it the README's description of what each part of the page needed, it built the pieces that load, save, check and export requests in minutes, and it set up the database straight from the original spreadsheet, so I never had to retype 22 requests. It also kept a running log of every test, which made this write-up much easier.
+**Where AI moved fast**
+AI was fastest on the build work. I gave it the API rules from the README and it had the endpoints for loading, saving, validating and exporting requests working in minutes. It built the database table straight from the starter spreadsheet, so I didn't have to retype 22 records, and it kept a log of every test as it went.
 
-My clearest almost-right moment came during the "absurd values" test. One very long name with no spaces stretched the table so wide that the status dropdowns disappeared off the side of the screen. The first fix made the table fit, and the measurements said the problem was solved. But the screenshot told a different story: ordinary words like "Minneapolis" and the "Medium" label were now chopped in half. I only caught it because we looked at the actual page instead of trusting the numbers. Limiting the fix to the two columns where people type free text solved it properly.
+**Where it went almost right**
+The clearest example was the long-name test. A 199-character name with no spaces pushed the status dropdowns off the screen. The first fix made the table fit, and the measurements said it was solved. The screenshot showed otherwise: words like "Minneapolis" and "Medium" were split in half. We only caught it by looking at the actual page. Limiting the fix to the two free-text columns solved it.
 
-Deploying taught me that "it works on my laptop" doesn't mean much. The live site couldn't save anything until the data moved into a real database, and even then it failed twice over small setup details: a setting name that didn't match, and a change that needed a fresh deploy before it took effect.
+Deployment followed the same pattern. The Supabase settings looked correct in Netlify, but the live site kept failing. The variable name didn't match what the code expected, and new settings only took effect after a fresh deploy. Supabase's logs showed the live site wasn't reaching the database at all, which pointed us to the cause.
 
-Next time, I would ask for a screenshot check after every visual change, spell out the exact setting names at the start, and ask AI to remind me to redeploy whenever I change a setting.
+**What I'd prompt differently**
+I'd ask for a screenshot check after every visual change instead of trusting the numbers. I'd give the exact setting names up front, and I'd make "redeploy after changing a setting" part of the checklist. Working one step at a time with evidence at each stage worked well, and I'd do that again.
