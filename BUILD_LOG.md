@@ -1404,5 +1404,22 @@ The Debug Log describes the real Step 7 failure (`EROFS: read-only file system, 
   from `claude/vigilant-goodall-emkv66`, so the live site is unaffected by the merge.
 
 ### Git commit
-Step 11 commit — its hash is reported in the final summary and `git log` (a commit cannot
-contain its own hash).
+`05be3b9` — Step 11: Final verification and completed SUBMISSION.md
+Pull request into `main`: https://github.com/jmaguire1510/vbc-m3-morrowlane/pull/1 (Netlify
+deploy-preview checks passed).
+
+### Post-submission cleanup (at J.R.'s request)
+J.R. later asked to remove all test entries from the live database. Listed first, then deleted
+only rows matching both the id range and a test name:
+```
+delete from public.requests where id between 23 and 33 and (requester_name = 'Morgan Livecheck'
+  or requester_name like 'Step10 %' or requester_name = 'Step11 Final Check') returning ...
+-> deleted 11 rows: 23 Morgan Livecheck; 24 Step10 Happy Path; 25-27 Step10 Duplicate;
+   28 Step10 <script>…; 29 Step10 Zoë Ñúñez 🚀🔥; 30 Step10 Formula; 31 Step10 Unbrokenname…;
+   32 Step10 Long Description; 33 Step11 Final Check
+after: rows 22 | ids 1-22 | fingerprint 0f3f942f9d0281c99bd74d9b793f50b1 (identical to data/seed-requests.csv)
+live: summary {"open_requests":9,"urgent_open":2,"completed_this_month":5} | rows 22 | export rows 22 | test names present: False
+```
+The test results recorded above and in SUBMISSION.md remain accurate as a record of what was
+tested; the entries themselves no longer appear on the live site. New requests will receive
+ids from 34 upward (Postgres does not reuse ids).
