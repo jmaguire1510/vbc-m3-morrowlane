@@ -1317,5 +1317,36 @@ App = hand calculation = database. ✔
   table, so it falsely reported every Location as split. Re-measured the text's own line count:
   0 split. Not an app issue.
 
+### Git commit (A)
+`b192750` — Step 10 (A): Test pass on live app; fix table overflow from long text
+
 ### Live verification of the fix
-Pending — requires deploying commit (A). Recorded in commit (B) along with SUBMISSION.md.
+Netlify published deploy `6affbf6031553d50530cab52` — production, branch
+`claude/vigilant-goodall-emkv66`, commit `b192750`, `state: ready`, `2026-11-20T03:33:30.009Z`
+(checked through the Netlify API).
+```
+LIVE after fix:
+viewport 1280px: {"cardWidth":918,"tableWidth":878,"pageScrollWidth":1280,"dropdownsOffscreen":"0/32"}
+viewport 390px: {"cardWidth":348,"tableWidth":559,"pageScrollWidth":600,"dropdownsOffscreen":"32/32"}
+{"location_cells":32,"location_split":[],"priority_badges":32,"priority_split":[]}
+tiles: {"open_requests":18,"urgent_open":3,"completed_this_month":1} | css served contains fix: 1
+```
+At 1280 px: table fits its card, no sideways scroll, every Status dropdown visible, no short
+value split mid-word. Screenshot: `docs/evidence/step10-absurd-layout-after-live.png`.
+The 390 px (phone) overflow is the pre-existing limitation noted above.
+
+### SUBMISSION.md
+Filled in the **Test pass results** table and **Known limitations** with the results above.
+Name, URLs, What I built, Debug Log and Assessment are completed in Step 11.
+
+Other limitations recorded (not in SUBMISSION.md's 3–5 list): the starter's Next.js version
+has `npm audit` security advisories (Step 9); Supabase returns at most 1,000 rows per request
+by default, so the list and export would need paging beyond that.
+
+### Live data note
+The live database now contains test entries: "Morgan Livecheck" (Step 9) and ten `Step10 …`
+entries (Step 10). They are left in place as evidence; J.R. can decide in Step 11 whether to
+remove them before submitting.
+
+### Git commit (B)
+Step 10 (B) — hash recorded in Step 11 entry / `git log`.
