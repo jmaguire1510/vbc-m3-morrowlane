@@ -448,4 +448,112 @@ Three independent hand calculations (seed, current data, controlled edit) all ma
 the app's output exactly.
 
 ### Git commit
-Step 4 commit (documentation only) — hash recorded in Step 5 entry / `git log`.
+`8ae37e7` — Step 4: Hand-verify completed_this_month against source data
+
+---
+
+## STEP 5 — Add server-side validation
+
+**Date:** 2026-11-20
+
+### Starting state
+- Step 4 committed (`8ae37e7`). `POST /api/requests` saves whatever it receives;
+  malformed JSON returns 500.
+- The browser dropdowns and `maxLength={500}` are front-end only.
+
+### Objective
+Enforce the README rules on the server: all four fields required after trimming,
+location/priority limited to the allowed values, description ≤ 500 characters. Reject
+with HTTP 400 and a field-specific message; invalid records must not be saved; valid
+records still return 201.
+
+### Evidence before change
+Run with `curl` against a backed-up copy of `data/entries.csv` (restored afterwards):
+```
+BEFORE rows: 24
+blank form:
+{"request":{"id":25,...,"requester_name":"","location":"","description":"","priority":"","status":"New"}}  <- HTTP 201
+invalid location:
+{"request":{"id":26,...,"requester_name":"X","location":"Paris","description":"y","priority":"Low","status":"New"}}  <- HTTP 201
+AFTER rows: 26
+25,2026-11-20T02:04:43Z,,,,,New
+26,2026-11-20T02:04:43Z,X,Paris,y,Low,New
+restored entries.csv (rows: 24)
+```
+A completely blank request and a made-up location were both saved.
+
+### Files changed
+| File | Why |
+|---|---|
+| `lib/validation.js` | New — `validateNewRequest()` with the allowed locations/priorities and 500-char limit |
+| `app/api/requests/route.js` | POST parses JSON safely (400 if malformed), validates, saves trimmed values |
+| `docs/evidence/step5-validation-error.png` | Screenshot of the empty-form error shown in the page |
+| `BUILD_LOG.md` | Step 4 hash + Step 5 entry |
+
+### Changes made
+- Fields are checked in form order (name, location, description, priority); the first
+  problem is returned as `{ "error": "..." }`, matching the README's single-message shape.
+- Values are trimmed and the **trimmed** values are what gets saved.
+- Location and priority must match exactly (case-sensitive), per README "exactly".
+- Non-text values (e.g. a number) and non-object bodies are rejected with 400.
+- Malformed JSON is now a 400 (it was a 500 in Step 3).
+
+### Tests performed and results (curl)
+
+| # | Test | HTTP | Message | Rows after |
+|---|---|---|---|---|
+| 1 | Blank form | 400 | Requester name is required. | 24 |
+| 2 | Missing field (no priority) | 400 | Priority is required. | 24 |
+| 3 | Whitespace-only name | 400 | Requester name is required. | 24 |
+| 4 | Whitespace-only description (`" \n\t "`) | 400 | Description is required. | 24 |
+| 5 | Invalid location `Paris` | 400 | Location must be Minneapolis, Chicago, Denver, or Austin. | 24 |
+| 6 | Wrong-case location `denver` | 400 | Location must be Minneapolis, Chicago, Denver, or Austin. | 24 |
+| 7 | Invalid priority `Critical` | 400 | Priority must be Low, Medium, High, or Urgent. | 24 |
+| 8 | Description 501 chars | 400 | Description must be 500 characters or fewer (it is 501). | 24 |
+| 9 | Name sent as a number | 400 | Requester name must be text. | 24 |
+| 10 | Malformed JSON | 400 | Request body must be valid JSON. | 24 |
+| 11 | JSON array body | 400 | Request body must be a JSON object with the request fields. | 24 |
+| 12 | Valid, padded with spaces | **201** | id 25, saved as `Casey Fictional` / `STEP 5 valid test - replace hallway ceiling tile` (trimmed), status New | 25 |
+| 13 | Valid, description exactly 500 chars (boundary) | **201** | id 26, status New | 26 |
+
+**Browser form (Playwright):**
+```
+start rows: 26
+Empty form: HTTP 400 | message: "Requester name is required." | rows: 26
+Whitespace-only name: HTTP 400 | message: "Requester name is required." | rows: 26
+Valid entry: HTTP 201 | message: "Request submitted." | rows: 27
+top row: Nov 20, 2026 | Avery Placeholder | Denver | STEP 5 browser valid test - restock printer paper | Low
+```
+The browser console shows `Failed to load resource: ... 400 (Bad Request)` for the
+rejected submissions — the browser's standard notice for any 4xx response, not an app error.
+
+`npm run build`: compiled successfully, no warnings.
+
+### Problems encountered
+- Initially exported a `STATUSES` list from `lib/validation.js`; it is only needed by
+  PATCH (Step 6).
+
+### Resolution
+- Removed it before testing to keep this step's scope to POST validation.
+
+### Observations recorded for later (not fixed now)
+- The page now shows the server's real message; the misleading "Could not reach the
+  server" from Step 1 no longer appears for validation errors.
+- Only the first error is reported at a time; a fully blank form needs several
+  submissions to see every missing field. Matches the README's single-message format.
+- Length is counted in JavaScript string units (same as the browser's `maxLength`), so
+  some emoji count as 2 characters.
+- Duplicate submissions are not blocked (no rule in README) — will be observed in Step 10.
+- **Display issue seen in the Step 5 screenshot:** the valid 500-character test
+  description (one unbroken word of `y`s) cannot wrap, so the table grows wider than
+  its card and the Priority/Status columns are pushed off the right edge. Data is
+  saved correctly; this is a layout problem with absurd input. Candidate for Step 10.
+- Local `data/entries.csv` now holds test rows 23–27 (git-ignored).
+
+### Verification
+Every invalid case returned 400 with a message naming the field, and the stored row
+count did not change. Valid submissions (including the 500-character boundary) returned
+201 and were saved with trimmed values.
+
+### Git commit
+Step 5 commit — hash recorded in Step 6 entry / `git log`.

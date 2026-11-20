@@ -1,4 +1,5 @@
 import { getAllRequests, createRequest } from "../../../lib/requests-store";
+import { validateNewRequest } from "../../../lib/validation";
 
 // STEP 2: GET requests endpoint — every request, newest first.
 export async function GET() {
@@ -15,16 +16,24 @@ export async function GET() {
 }
 
 // STEP 3: POST request handling — save a new request with status "New".
-// (Server-side validation is added in Step 5.)
 export async function POST(request) {
   try {
-    const body = await request.json();
-    const saved = await createRequest({
-      requester_name: body.requester_name,
-      location: body.location,
-      description: body.description,
-      priority: body.priority,
-    });
+    // STEP 5: Server-side validation — reject bad input with 400 before saving.
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json(
+        { error: "Request body must be valid JSON." },
+        { status: 400 }
+      );
+    }
+    const { error, value } = validateNewRequest(body);
+    if (error) {
+      return Response.json({ error }, { status: 400 });
+    }
+
+    const saved = await createRequest(value);
     return Response.json({ request: saved }, { status: 201 });
   } catch (error) {
     console.error("POST /api/requests failed:", error);
