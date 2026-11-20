@@ -1069,8 +1069,35 @@ No route files or front-end files changed.
 - `data/entries.csv` (git-ignored) is no longer used; the local copy was moved out of the
   project. `data/seed-requests.csv` stays as the original source data.
 
-### Live verification
-Pending — requires Netlify environment variables + redeploy. Recorded in commit (B).
+### Git commit (A)
+`84d3423` — Step 9 (A): Replace local CSV storage with Supabase
 
-### Git commit
-(A) Step 9 code commit — hash recorded in the live-verification section / `git log`.
+### Problem after (A): live site 500 — environment variable name mismatch
+- After pushing (A), before any Netlify variables existed, the live site returned
+  `500 {"error":"Could not load the summary. Please try again."}` on `/api/summary` and
+  `/api/requests` (02:51:52Z) — expected, and confirms the clean error path in production.
+- J.R. set the Netlify variables following Supabase's dashboard "connect" guide, which names
+  the public key **`SUPABASE_PUBLISHABLE_KEY`**. The code (and the starter's `.env.example`)
+  read **`SUPABASE_ANON_KEY`**, so the key was still "missing": live site still 500 at 02:56:59Z.
+- J.R. could not edit the existing Netlify variables in the dashboard.
+- **Security note:** while sharing the variable list, a Supabase **secret** key (`sb_secret_…`)
+  was pasted into the AI chat. It is not used by the app, was not written to any file, and J.R.
+  was advised to revoke it in Supabase (Project Settings → API Keys) and keep it out of Netlify.
+- Supabase's guide also suggested installing `@supabase/server`; not needed (that package
+  verifies logged-in users; this app has no logins and already uses `@supabase/supabase-js`).
+
+**Fix (agreed with J.R.):** the store now accepts the public key under either name —
+`SUPABASE_ANON_KEY || SUPABASE_PUBLISHABLE_KEY` — and `.env.example` documents both (no real
+values). Missing both still throws a clear server-side error → clean 500 JSON.
+
+| Local test | Result |
+|---|---|
+| Only `SUPABASE_PUBLISHABLE_KEY` set | `200 {"open_requests":9,"urgent_open":2,"completed_this_month":5}` |
+| Only `SUPABASE_ANON_KEY` set | `200` same |
+| Neither set | `500 {"error":"Could not load the summary. Please try again."}`; server log: `SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_PUBLISHABLE_KEY) must be set.` |
+| `npm run build` + key scan | compiled; key in 0 browser files, 0 committable files; `sb_secret` in 0 committable files |
+
+Files: `lib/requests-store.js` (key lookup), `.env.example` (documents the alternative name).
+
+### Live verification
+Pending — requires a Netlify redeploy of this fix. Recorded in commit (B).
