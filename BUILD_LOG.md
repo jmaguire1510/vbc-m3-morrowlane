@@ -1099,5 +1099,95 @@ values). Missing both still throws a clear server-side error → clean 500 JSON.
 
 Files: `lib/requests-store.js` (key lookup), `.env.example` (documents the alternative name).
 
-### Live verification
-Pending — requires a Netlify redeploy of this fix. Recorded in commit (B).
+### Git commit (A2)
+`7943bcc` — Step 9 (A2): Accept SUPABASE_PUBLISHABLE_KEY as the public key name
+
+### Problem after (A2): live site still 500
+- After (A2) auto-deployed, the live site still returned 500 (03:11:00Z and, after J.R.
+  added the variables, 03:20:52Z).
+- **Evidence from Supabase's own request logs** (queried through the Supabase connector):
+  every request to `/rest/v1/requests` since 02:30Z came from this dev environment
+  (caller "Anthropic, PBC"); **zero** came from Netlify. So the live code never reached
+  Supabase — it stopped at the "must be set" check before calling it.
+- A Netlify dashboard AI agent was tried; it reported it could not access the project's
+  environment variables or deploy controls.
+- J.R. created a short-lived Netlify personal access token and entered it in a secure
+  credential form (the proxy attaches it to `api.netlify.com` requests; the value was never
+  visible in the chat, code, or logs).
+
+Netlify API findings (names/scopes only; values were never printed):
+```
+site: jmaguire-module3 | repo jmaguire1510/vbc-m3-morrowlane | branch claude/vigilant-goodall-emkv66 | cmd npm run build | dir .next
+published deploy: 6affb909326727e5250adb81 | commit 7943bcc | state ready | at 2026-11-20T03:06:30.988Z
+2 variable(s):
+  SUPABASE_URL              scopes=['builds','functions','post_processing','runtime'] | all=https URL (matches project URL)
+  SUPABASE_PUBLISHABLE_KEY  scopes=['builds','functions','post_processing','runtime'] | all=sb_publishable_…
+Netlify key identical to locally tested key: True | surrounding whitespace: False
+```
+`SUPABASE_SECRET_KEY` was **not** present in Netlify.
+
+**Root cause:** the variables were correct, but **no deploy had run since they were added**.
+The published deploy (03:06:30Z) predated them, and Netlify only applies environment-variable
+changes to the server functions on the next deploy.
+
+**Fix:** triggered a production build through the Netlify API →
+deploy `6affbd30cc4b609b80dc8339`, `state: ready`, `context: production`, branch
+`claude/vigilant-goodall-emkv66`, commit `7943bcc`, published `2026-11-20T03:24:09.083Z`.
+
+### Live verification (https://jmaguire-module3.netlify.app)
+
+Reads (curl, 03:24:20Z):
+```
+{"open_requests":9,"urgent_open":2,"completed_this_month":5}  <- /api/summary HTTP 200
+/api/requests -> HTTP 200   (cache-control: no-cache; Netlify Durable fwd=bypass)
+rows: 22 | newest first: True | all 22 seed rows identical: True
+```
+
+Browser (Playwright) on the live site — fictional entry Morgan Livecheck / Chicago / High:
+```
+LOADED: tiles 9 | 2 | 5 | rows 22 | top: Aug 28, 2026 | Alison Vo | Minneapolis
+  [network] POST /api/requests -> 201
+POST body: {"request":{"id":23,"created_at":"2026-11-20T03:24:38Z","requester_name":"Morgan Livecheck","location":"Chicago","description":"STEP 9 live test - conference room door sticks, needs adjustment","priority":"High","status":"New"}}
+FORM MESSAGE: Request submitted.
+AFTER SAVE: tiles 10 | 2 | 0 | rows 23 | top: Nov 20, 2026 | Morgan Livecheck | Chicago
+AFTER REFRESH: tiles 10 | 2 | 0 | rows 23 | top: Nov 20, 2026 | Morgan Livecheck | Chicago
+entry status after refresh: New
+  [network] PATCH /api/requests/23 -> 200
+AFTER PATCH: tiles 10 | 2 | 0 | rows 23 | top: Nov 20, 2026 | Morgan Livecheck | Chicago
+AFTER 2nd REFRESH: tiles 10 | 2 | 0 | rows 23 | top: Nov 20, 2026 | Morgan Livecheck | Chicago
+entry status after 2nd refresh: In Progress
+EXPORT: morrowlane-requests.csv | data rows: 23 | header: id,created_at,requester_name,location,description,priority,status
+  row 1: 23,2026-11-20T03:24:38Z,Morgan Livecheck,Chicago,"STEP 9 live test - conference room door sticks, needs adjustment",High,In Progress
+  last : 1,2026-07-16T14:20:00Z,Dana Whitfield,Minneapolis,HVAC making noise in suite 400,High,Complete
+```
+Screenshot: `docs/evidence/step9-live-saved.png`
+
+Supabase (SQL): `id 23 | 2026-11-20 03:24:38.841638+00 | Morgan Livecheck | Chicago | … | High | In Progress | total_rows 23`.
+
+Supabase request log since 03:24Z (`/rest/v1/requests`): callers "Amazon.com, Inc." /
+"Amazon Technologies Inc." (Netlify's servers), key type `sb_publishable_…`:
+GET 200 ×15, **POST 201 ×1**, **PATCH 200 ×1**.
+
+| Requirement | Result |
+|---|---|
+| Existing data loads | ✔ 22 rows identical to source, tiles 9 / 2 / 5 |
+| New entry saves | ✔ 201, id 23, status New |
+| Survives refresh | ✔ still top row after refresh |
+| Exists in Supabase | ✔ row 23 in `public.requests` |
+| PATCH persists | ✔ New → In Progress, survives a second refresh, stored in Supabase |
+| Summaries correct | ✔ open 9→10; urgent stays 2 (entry is High); completed_this_month 5→0 because Nov 2026 is now the latest month and has no Complete requests (Step 4 rule); PATCH to In Progress keeps open at 10 |
+| CSV export correct | ✔ 23 rows, newest first, new entry with updated status at top, oldest (id 1) last |
+
+**The Step 7 bug is fixed:** saves and status changes now persist on the live site.
+
+### Follow-ups for J.R. (manual)
+- Revoke the Supabase **secret** key that was pasted into the chat (Supabase → Project Settings
+  → API Keys). It is not used anywhere.
+- Delete the Netlify personal access token when no longer needed (Netlify → User settings →
+  Applications), and optionally remove the saved credential from the `vbc-m3-morrowlane`
+  cloud environment settings.
+- Optionally delete the unused Netlify variable name duplication later; `SUPABASE_PUBLISHABLE_KEY`
+  is the one in use.
+
+### Git commit (B)
+Step 9 (B) live-verification commit — hash recorded in Step 10 entry / `git log`.
